@@ -54,7 +54,7 @@ class NotificationManager: ObservableObject {
         content.title = title
         content.body = body
         content.sound = .default
-        content.badge = 1
+        content.badge = NSNumber(value: 1)
         content.userInfo = ["plantID": plantID.uuidString]
 
         let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)

@@ -197,8 +197,12 @@ struct NFCScanSheet: View {
             // Look up plant by ID string
             let ctx = PersistenceController.shared.container.viewContext
             let req = PlantEntity.fetchRequest()
-            req.predicate = NSPredicate(format: "id == %@",
-                                        UUID(uuidString: plantID) as CVarArg? ?? plantID as CVarArg)
+            // Use UUID directly if possible, otherwise fall back to string match
+            if let uuid = UUID(uuidString: plantID) {
+                req.predicate = NSPredicate(format: "id == %@", uuid as CVarArg)
+            } else {
+                req.predicate = NSPredicate(format: "nfcID == %@", plantID)
+            }
             req.fetchLimit = 1
             if let plant = (try? ctx.fetch(req))?.first {
                 withAnimation(.spring(duration: 0.5)) {
