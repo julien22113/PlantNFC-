@@ -89,7 +89,8 @@ class NotificationManager: ObservableObject {
 
     // MARK: - Clear badge
     func clearBadge() {
-        UNUserNotificationCenter.current().setBadgeCount(0) { _ in }
+        UNUserNotificationCenter.current()
+            .setBadgeCount(0, withCompletionHandler: nil)
     }
 
     // MARK: - Helper

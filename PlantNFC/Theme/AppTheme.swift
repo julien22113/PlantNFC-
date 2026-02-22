@@ -67,6 +67,30 @@ enum WaterIntervalPreset: String, CaseIterable, Identifiable {
 // MARK: - Plant Emojis
 let plantEmojis = ["🌿", "🪴", "🌵", "🌸", "🌺", "🌻", "🌹", "🌱", "🍀", "🎋", "🎍", "🌾", "🍃", "🍂", "🌳", "🌲"]
 
+// MARK: - NFC Scan Mode
+enum NFCScanMode {
+    case readForWatering
+    case readForLinking
+}
+
+// MARK: - NFC Result (Equatable required for onChange)
+enum NFCScanResult: Equatable {
+    case wateredPlant(plantID: String) // store ID string, not NSManagedObject
+    case unknownTag(String)
+    case linked(String)
+    case error(String)
+
+    static func == (lhs: NFCScanResult, rhs: NFCScanResult) -> Bool {
+        switch (lhs, rhs) {
+        case (.wateredPlant(let a), .wateredPlant(let b)): return a == b
+        case (.unknownTag(let a),  .unknownTag(let b)):  return a == b
+        case (.linked(let a),      .linked(let b)):      return a == b
+        case (.error(let a),       .error(let b)):       return a == b
+        default: return false
+        }
+    }
+}
+
 // MARK: - Helper Extensions
 extension View {
     func plantCard() -> some View {

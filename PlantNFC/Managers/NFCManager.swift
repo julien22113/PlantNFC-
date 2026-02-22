@@ -3,19 +3,7 @@ import CoreNFC
 import AudioToolbox
 import UIKit
 
-// MARK: - NFC Scan Mode
-enum NFCScanMode {
-    case readForWatering   // Scan → find plant → water it
-    case readForLinking    // Scan → return tag ID to bind to new plant
-}
-
-// MARK: - NFC Result
-enum NFCScanResult {
-    case wateredPlant(PlantEntity)
-    case unknownTag(String)
-    case linked(String)
-    case error(String)
-}
+// NFCScanMode and NFCScanResult are defined in AppTheme.swift
 
 @MainActor
 class NFCManager: NSObject, ObservableObject {
@@ -35,7 +23,6 @@ class NFCManager: NSObject, ObservableObject {
             scanResult = .error("NFC niet beschikbaar op dit apparaat.")
             return
         }
-
         currentMode = mode
         linkingCompletion = onLinked
         isScanning = true
@@ -53,11 +40,30 @@ class NFCManager: NSObject, ObservableObject {
         isScanning = false
     }
 
+    // MARK: - Handle Tag ID
+    func handleTagID(_ tagID: String, mode: NFCScanMode) {
+        switch mode {
+        case .readForWatering:
+            if let plant = PersistenceController.shared.findPlant(byNFCID: tagID) {
+                PersistenceController.shared.waterPlant(plant)
+                successFeedback()
+                let idString = plant.id?.uuidString ?? tagID
+                scanResult = .wateredPlant(plantID: idString)
+            } else {
+                errorFeedback()
+                scanResult = .unknownTag(tagID)
+            }
+        case .readForLinking:
+            successFeedback()
+            linkingCompletion?(tagID)
+            scanResult = .linked(tagID)
+        }
+    }
+
     // MARK: - Haptic & Sound
     private func successFeedback() {
         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
         UINotificationFeedbackGenerator().notificationOccurred(.success)
-        // System sound: "payment success" style
         AudioServicesPlaySystemSound(1007)
     }
 
@@ -67,58 +73,35 @@ class NFCManager: NSObject, ObservableObject {
 
     // MARK: - Simulator Mock
     #if targetEnvironment(simulator)
-    func simulateScan(mode: NFCScanMode, mockID: String = "MOCK-\(UUID().uuidString.prefix(8))") {
+    func simulateScan(mode: NFCScanMode) {
+        let mockID = "MOCK-" + String(UUID().uuidString.prefix(8))
         isScanning = true
         scanResult = nil
-
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             self.isScanning = false
             self.handleTagID(mockID, mode: mode)
         }
     }
     #endif
-
-    // MARK: - Handle Tag ID (shared logic)
-    func handleTagID(_ tagID: String, mode: NFCScanMode) {
-        switch mode {
-        case .readForWatering:
-            if let plant = PersistenceController.shared.findPlant(byNFCID: tagID) {
-                PersistenceController.shared.waterPlant(plant)
-                successFeedback()
-                scanResult = .wateredPlant(plant)
-            } else {
-                errorFeedback()
-                scanResult = .unknownTag(tagID)
-            }
-
-        case .readForLinking:
-            successFeedback()
-            linkingCompletion?(tagID)
-            scanResult = .linked(tagID)
-        }
-    }
 }
 
 // MARK: - NFCTagReaderSessionDelegate
 extension NFCManager: NFCTagReaderSessionDelegate {
 
-    nonisolated func tagReaderSessionDidBecomeActive(_ session: NFCTagReaderSession) {
-        // Session is active, ready to scan
-    }
+    nonisolated func tagReaderSessionDidBecomeActive(_ session: NFCTagReaderSession) {}
 
-    nonisolated func tagReaderSession(_ session: NFCTagReaderSession, didInvalidateWithError error: Error) {
+    nonisolated func tagReaderSession(_ session: NFCTagReaderSession,
+                                      didInvalidateWithError error: Error) {
         let nfcError = error as? NFCReaderError
         guard nfcError?.code != .readerSessionInvalidationErrorUserCanceled else { return }
-
         Task { @MainActor in
             self.isScanning = false
-            if nfcError?.code != .readerSessionInvalidationErrorUserCanceled {
-                self.scanResult = .error("NFC scan mislukt: \(error.localizedDescription)")
-            }
+            self.scanResult = .error("NFC scan mislukt.")
         }
     }
 
-    nonisolated func tagReaderSession(_ session: NFCTagReaderSession, didDetect tags: [NFCTag]) {
+    nonisolated func tagReaderSession(_ session: NFCTagReaderSession,
+                                      didDetect tags: [NFCTag]) {
         guard let tag = tags.first else { return }
 
         session.connect(to: tag) { error in

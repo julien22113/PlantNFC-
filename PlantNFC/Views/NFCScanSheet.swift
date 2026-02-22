@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 struct NFCScanSheet: View {
     let mode: NFCScanMode
@@ -8,8 +9,12 @@ struct NFCScanSheet: View {
     @Environment(\.managedObjectContext) private var viewContext
 
     @State private var pulseScale: CGFloat = 1.0
-    @State private var showResult = false
-    @State private var resultPlant: PlantEntity? = nil
+    @State private var showSuccess = false
+    @State private var successPlantName = ""
+    @State private var successPlantEmoji = ""
+    @State private var successCountdown = ""
+    @State private var showUnknownTag = false
+    @State private var unknownTagID = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,18 +25,17 @@ struct NFCScanSheet: View {
                 .padding(.top, 12)
                 .padding(.bottom, 24)
 
-            if showResult, let plant = resultPlant {
-                successView(plant: plant)
-            } else if case .unknownTag(let id) = nfcManager.scanResult ?? .error("") {
-                unknownTagView(tagID: id)
+            if showSuccess {
+                successView
+            } else if showUnknownTag {
+                unknownTagView
             } else {
                 scanningView
             }
 
             Spacer()
 
-            // Close / Cancel
-            Button(showResult ? "Sluiten" : "Annuleren") {
+            Button(showSuccess ? "Sluiten" : "Annuleren") {
                 nfcManager.stopScanning()
                 isPresented = false
             }
@@ -43,16 +47,15 @@ struct NFCScanSheet: View {
         .background(Color.plantBg)
         .presentationDetents([.fraction(0.55)])
         .presentationCornerRadius(24)
-        .onChange(of: nfcManager.scanResult) { _, result in
+        // Fixed: use onReceive instead of onChange — no Equatable needed this way
+        .onReceive(nfcManager.$scanResult) { result in
             handleResult(result)
         }
         .onAppear {
-            #if targetEnvironment(simulator)
-            // Auto-simulate after brief delay on simulator
-            #else
+            startPulse()
+            #if !targetEnvironment(simulator)
             nfcManager.startScanning(mode: mode)
             #endif
-            startPulse()
         }
     }
 
@@ -60,7 +63,6 @@ struct NFCScanSheet: View {
     private var scanningView: some View {
         VStack(spacing: 28) {
             ZStack {
-                // Pulse rings
                 ForEach(0..<3, id: \.self) { i in
                     Circle()
                         .stroke(Color.plantGreen.opacity(0.3 - Double(i) * 0.08), lineWidth: 1.5)
@@ -68,21 +70,17 @@ struct NFCScanSheet: View {
                         .scaleEffect(pulseScale)
                         .animation(
                             .easeOut(duration: 1.5)
-                            .repeatForever(autoreverses: false)
-                            .delay(Double(i) * 0.4),
+                                .repeatForever(autoreverses: false)
+                                .delay(Double(i) * 0.4),
                             value: pulseScale
                         )
                 }
-
-                // NFC icon
                 ZStack {
                     Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [.plantGreen, .plantGreenDark],
-                                startPoint: .topLeading, endPoint: .bottomTrailing
-                            )
-                        )
+                        .fill(LinearGradient(
+                            colors: [.plantGreen, .plantGreenDark],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        ))
                         .frame(width: 80, height: 80)
                     Image(systemName: "antenna.radiowaves.left.and.right")
                         .font(.system(size: 34))
@@ -100,7 +98,6 @@ struct NFCScanSheet: View {
                     .multilineTextAlignment(.center)
             }
 
-            // Simulator mock
             #if targetEnvironment(simulator)
             Button {
                 nfcManager.simulateScan(mode: mode)
@@ -137,14 +134,14 @@ struct NFCScanSheet: View {
     }
 
     // MARK: - Success View
-    private func successView(plant: PlantEntity) -> some View {
+    private var successView: some View {
         VStack(spacing: 24) {
             ZStack {
                 Circle()
                     .fill(Color.plantGreen.opacity(0.15))
                     .frame(width: 120, height: 120)
                 VStack(spacing: 4) {
-                    Text(plant.wrappedEmoji)
+                    Text(successPlantEmoji)
                         .font(.system(size: 50))
                     Image(systemName: "checkmark.circle.fill")
                         .font(.title2)
@@ -152,17 +149,14 @@ struct NFCScanSheet: View {
                         .offset(x: 30, y: -30)
                 }
             }
-
             VStack(spacing: 8) {
                 Text("Plant heeft water gekregen 🌱")
                     .font(.title3.bold())
                     .multilineTextAlignment(.center)
-
-                Text(plant.wrappedName)
+                Text(successPlantName)
                     .font(.title2.bold())
                     .foregroundColor(.plantGreen)
-
-                Text("Volgende waterbeurt: \(plant.countdownText)")
+                Text("Volgende waterbeurt: \(successCountdown)")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
@@ -172,7 +166,7 @@ struct NFCScanSheet: View {
     }
 
     // MARK: - Unknown Tag View
-    private func unknownTagView(tagID: String) -> some View {
+    private var unknownTagView: some View {
         VStack(spacing: 20) {
             ZStack {
                 Circle()
@@ -182,11 +176,10 @@ struct NFCScanSheet: View {
                     .font(.system(size: 50))
                     .foregroundColor(.orange)
             }
-
             VStack(spacing: 8) {
                 Text("Onbekende NFC-tag")
                     .font(.title3.bold())
-                Text("Deze tag is nog niet gekoppeld aan een plant.\nTag ID: \(tagID)")
+                Text("Tag ID: \(unknownTagID)\nKoppel deze tag eerst aan een plant.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -198,17 +191,31 @@ struct NFCScanSheet: View {
     // MARK: - Handle Result
     private func handleResult(_ result: NFCScanResult?) {
         guard let result = result else { return }
+
         switch result {
-        case .wateredPlant(let plant):
-            withAnimation(.spring(duration: 0.5)) {
-                resultPlant = plant
-                showResult = true
+        case .wateredPlant(let plantID):
+            // Look up plant by ID string
+            let ctx = PersistenceController.shared.container.viewContext
+            let req = PlantEntity.fetchRequest()
+            req.predicate = NSPredicate(format: "id == %@",
+                                        UUID(uuidString: plantID) as CVarArg? ?? plantID as CVarArg)
+            req.fetchLimit = 1
+            if let plant = (try? ctx.fetch(req))?.first {
+                withAnimation(.spring(duration: 0.5)) {
+                    successPlantName  = plant.wrappedName
+                    successPlantEmoji = plant.wrappedEmoji
+                    successCountdown  = plant.countdownText
+                    showSuccess = true
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    isPresented = false
+                }
             }
-            // Auto close after 3s
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                isPresented = false
-            }
-        case .unknownTag, .error, .linked:
+
+        case .unknownTag(let id):
+            withAnimation { showUnknownTag = true; unknownTagID = id }
+
+        case .linked, .error:
             break
         }
     }
