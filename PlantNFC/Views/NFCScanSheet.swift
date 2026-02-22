@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import CoreData
 
 struct NFCScanSheet: View {
     let mode: NFCScanMode
