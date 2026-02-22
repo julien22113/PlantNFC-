@@ -1,0 +1,108 @@
+workflows:
+  # ─────────────────────────────────────────────────────────────
+  # Workflow 1: Debug build voor simulator (geen signing nodig)
+  # Gebruik deze om te controleren of de code compileert
+  # ─────────────────────────────────────────────────────────────
+  ios-simulator-build:
+    name: PlantNFC – Simulator Build (gratis, geen signing)
+    max_build_duration: 30
+    environment:
+      xcode: 15.4
+    scripts:
+      - name: Install XcodeGen
+        script: brew install xcodegen
+
+      - name: Generate Xcode project
+        script: xcodegen generate --spec project.yml
+
+      - name: Build voor Simulator
+        script: |
+          xcodebuild \
+            -project PlantNFC.xcodeproj \
+            -scheme PlantNFC \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+            -derivedDataPath DerivedData \
+            build
+
+    artifacts:
+      - DerivedData/Build/Products/**/*.app
+
+  # ─────────────────────────────────────────────────────────────
+  # Workflow 2: Echte iPhone build via Codemagic signing
+  # Vereist: Apple ID ingesteld in Codemagic → Teams → Integrations
+  # Instaleer via Sideloadly (Windows) of AltStore
+  # ─────────────────────────────────────────────────────────────
+  ios-device-build:
+    name: PlantNFC – iPhone Build (installeerbaar .ipa)
+    max_build_duration: 60
+    environment:
+      xcode: 15.4
+      ios_signing:
+        distribution_type: development
+        bundle_identifier: com.plantnfc.app
+
+    scripts:
+      - name: Install XcodeGen
+        script: brew install xcodegen
+
+      - name: Generate Xcode project
+        script: xcodegen generate --spec project.yml
+
+      - name: Set Team ID in project
+        script: |
+          # Vervang JOUW_TEAM_ID met je Apple Team ID (zie: developer.apple.com/account)
+          TEAM_ID=$APPLE_TEAM_ID
+          sed -i "" "s/DEVELOPMENT_TEAM = \"\"/DEVELOPMENT_TEAM = \"$TEAM_ID\"/g" \
+            PlantNFC.xcodeproj/project.pbxproj || true
+
+      - name: Build & Archive
+        script: |
+          xcodebuild \
+            -project PlantNFC.xcodeproj \
+            -scheme PlantNFC \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath PlantNFC.xcarchive \
+            archive \
+            CODE_SIGN_IDENTITY="Apple Development" \
+            DEVELOPMENT_TEAM=$APPLE_TEAM_ID
+
+      - name: Export IPA
+        script: |
+          cat > ExportOptions.plist << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>development</string>
+              <key>teamID</key>
+              <string>${APPLE_TEAM_ID}</string>
+              <key>compileBitcode</key>
+              <false/>
+              <key>signingStyle</key>
+              <string>automatic</string>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild \
+            -exportArchive \
+            -archivePath PlantNFC.xcarchive \
+            -exportPath IPA \
+            -exportOptionsPlist ExportOptions.plist
+
+    artifacts:
+      - IPA/*.ipa
+      - PlantNFC.xcarchive/**
+
+    publishing:
+      email:
+        recipients:
+          - jouw-email@example.com    # ← Vervang met jouw emailadres
+        notify:
+          success: true
+          failure: true

@@ -1,0 +1,37 @@
+# Xcode build output
+DerivedData/
+*.xcarchive/
+IPA/
+build/
+
+# Xcode generated project (we use XcodeGen to generate this)
+*.xcodeproj/
+!*.xcodeproj/project.pbxproj
+
+# Actually: let Codemagic generate the project via XcodeGen
+# So we DO ignore the .xcodeproj entirely
+*.xcodeproj
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Xcode user data
+xcuserdata/
+*.xcuserdatad/
+*.moved-aside
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# IDE
+.idea/
+*.swp
+*.swo
